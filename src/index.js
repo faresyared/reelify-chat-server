@@ -4,16 +4,13 @@ const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const jwt = require('socketio-jwt');
+const { authorize } = require('socketio-jwt'); // Use a slightly different import style
 
 const ChatMessage = require('./models/chatMessageModel');
 
 const app = express();
 const server = http.createServer(app);
 
-// --- THIS IS THE FIX ---
-// We are now explicitly telling the Express app and Socket.IO
-// to trust your live frontend URL.
 const allowedOrigins = [
   process.env.FRONTEND_URL || "http://localhost:5173",
 ];
@@ -29,39 +26,40 @@ const corsOptions = {
   credentials: true,
 };
 
-// Apply CORS to all Express API routes (like /messages/:id)
 app.use(cors(corsOptions));
 
 const io = new Server(server, {
-  cors: corsOptions, // Apply the same CORS options to Socket.IO
+  cors: corsOptions,
 });
 
-// --- Connect to MongoDB ---
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('MongoDB Connected for Chat Server...'))
   .catch(err => console.error(err));
 
-// --- API Route to get message history ---
 app.get('/messages/:campaignId', async (req, res) => {
   try {
     const messages = await ChatMessage.find({ campaign: req.params.campaignId })
       .sort({ createdAt: 'desc' })
       .limit(50)
       .populate('author', 'username avatar');
-
     res.json(messages.reverse());
   } catch (err) {
     res.status(500).send('Server Error');
   }
 });
 
-// --- Socket.IO Authentication Middleware ---
-io.use(jwt.authorize({
-  secret: process.env.JWT_SECRET,
-  handshake: true
+// --- THIS IS THE FIX ---
+// This is a more explicit and robust way to configure the authentication middleware.
+// It uses a function to provide the secret, which avoids many common issues.
+io.use(authorize({
+  secret: (decodedToken, callback) => {
+    // This function provides the secret key for verification.
+    const secret = process.env.JWT_SECRET;
+    callback(null, secret);
+  },
+  handshake: true,
 }));
 
-// --- Main Socket.IO Connection Logic ---
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.decoded_token.user.username);
 
@@ -96,7 +94,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// --- Health Check Route ---
 app.get('/', (req, res) => {
   res.send('Chat server is running!');
 });
