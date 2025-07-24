@@ -4,7 +4,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const { authorize } = require('socketio-jwt'); // Use a slightly different import style
+const jwt = require('jsonwebtoken'); // Import the standard JWT library
 
 const ChatMessage = require('./models/chatMessageModel');
 
@@ -48,19 +48,31 @@ app.get('/messages/:campaignId', async (req, res) => {
   }
 });
 
-// --- THIS IS THE FIX ---
-// This is a more explicit and robust way to configure the authentication middleware.
-// It uses a function to provide the secret, which avoids many common issues.
-io.use(authorize({
-  secret: (decodedToken, callback) => {
-    // This function provides the secret key for verification.
-    const secret = process.env.JWT_SECRET;
-    callback(null, secret);
-  },
-  handshake: true,
-}));
+// --- THIS IS THE NEW, RELIABLE AUTHENTICATION MIDDLEWARE ---
+// We write our own simple check instead of using the old library.
+io.use((socket, next) => {
+  // The token is sent in the 'auth' object from the client
+  const token = socket.handshake.auth.token;
+
+  if (!token) {
+    console.error('Authentication error: No token provided.');
+    return next(new Error('Authentication error'));
+  }
+
+  // We verify the token using the same library and secret as our main backend
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      console.error('Authentication error: Invalid token.');
+      return next(new Error('Authentication error'));
+    }
+    // If the token is valid, we attach the user info to the socket object
+    socket.decoded_token = decoded;
+    next();
+  });
+});
 
 io.on('connection', (socket) => {
+  // Now this will only run for successfully authenticated users
   console.log('A user connected:', socket.decoded_token.user.username);
 
   socket.on('joinCampaign', (campaignId) => {
